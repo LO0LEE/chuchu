@@ -1,35 +1,41 @@
 #!/bin/bash
 
-# Update package repositories
-sudo apt update
+# Update and upgrade the system
+apt-get update
+apt-get upgrade -y
 
-# Install dependencies
-sudo apt install -y build-essential wget curl openssl libssl-dev gcc make
+# Install necessary dependencies
+apt-get install -y build-essential net-tools
 
-# Create a directory for SoftEther VPN Server installation
-mkdir ~/softether-installation
-cd ~/softether-installation
+# Download the latest version of SoftEther VPN Server
+wget https://github.com/SoftEtherVPN/SoftEtherVPN_Stable/releases/download/v4.39-9772-beta/softether-vpnserver-v4.39-9772-beta-2022.04.26-linux-x64-64bit.tar.gz
 
-# Download SoftEther VPN Server package
-wget https://github.com/SoftEtherVPN/SoftEtherVPN_Stable/releases/download/v4.29-9680-rtm/softether-vpnserver-v4.29-9680-rtm-2019.02.28-linux-x64-64bit.tar.gz
-# Extract the downloaded package
-tar xzf softether-vpnserver-v4.29-9680-rtm-2019.02.28-linux-x64-64bit.tar.gz
+# Extract the installer
+tar -xvzf softether-vpnserver-v4.39-9772-beta-2022.04.26-linux-x64-64bit.tar.gz
 
-# Move to the extracted directory
+# Navigate to the extracted directory and install SoftEther
 cd vpnserver
+make
 
-# Start the installation process
-sudo make
+# Move the extracted directory to /usr/local
+cd ..
+mv vpnserver /usr/local
 
-# Set permissions for the vpnserver executable
-sudo chmod 600 *
-sudo chmod 700 vpncmd vpnserver
+# Set permissions
+cd /usr/local/vpnserver/
+chmod 600 *
+chmod 700 vpncmd
+chmod 700 vpnserver
 
-# Move the vpnserver directory to /usr/local
-sudo mv ~/softether-installation/vpnserver /usr/local
+# Test SoftEther VPN Server operation
+./vpncmd <<EOF
+3
+check
+exit
+EOF
 
-# Set up SoftEther VPN as a systemd service
-sudo tee /etc/systemd/system/vpnserver.service > /dev/null <<EOF
+# Create a systemd service file
+cat <<EOF > /etc/systemd/system/vpnserver.service
 [Unit]
 Description=SoftEther VPN Server
 After=network.target
@@ -46,11 +52,8 @@ WantedBy=multi-user.target
 EOF
 
 # Reload systemd to apply changes
-sudo systemctl daemon-reload
+systemctl daemon-reload
 
 # Enable and start the SoftEther VPN Server service
-sudo systemctl enable vpnserver
-sudo systemctl start vpnserver
-
-# Check the status of the service
-sudo systemctl status vpnserver
+systemctl enable vpnserver
+systemctl start vpnserver
