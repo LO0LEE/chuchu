@@ -1,106 +1,88 @@
 #!/bin/bash
+apt-get -y update && apt-get -y upgrade
 
-# Update system
-apt-get update && apt-get upgrade -y
+#Install essentials
+apt-get -y install build-essential libssl-dev g++ openssl libpthread-stubs0-dev gcc-multilib dnsmasq
 
-# Install necessary dependencies
-apt-get install -y build-essential net-tools dnsmasq
+#Backup dnsmasq conf
+mv /etc/dnsmasq.conf /etc/dnsmasq.conf-bak
 
-# Download SoftEther VPN Server
-wget https://github.com/SoftEtherVPN/SoftEtherVPN_Stable/releases/download/v4.39-9772-beta/softether-vpnserver-v4.39-9772-beta-2022.04.26-linux-x64-64bit.tar.gz
+#disable UFW firewall
+ufw disable
 
-# Extract the installer
-tar -xvzf softether-vpnserver-v4.39-9772-beta-2022.04.26-linux-x64-64bit.tar.gz
+#Stop UFW
+service ufw stop
 
-# Move to the extracted directory
+#Flush Iptables
+iptables -F && iptables -X
+
+#Use wget to copy it directly onto the server.
+wget https://github.com/SoftEtherVPN/SoftEtherVPN_Stable/releases/download/v4.29-9680-rtm/softether-vpnserver-v4.29-9680-rtm-2019.02.28-linux-x64-64bit.tar.gz
+
+#Extract it. Enter directory and run make and agree to all license agreements:
+tar xvf softether-vpnserver-*.tar.gz
 cd vpnserver
+printf '1\n1\n1\n' | make
 
-# Build SoftEther VPN Server
-make
-
-# Move vpnserver directory to /usr/local
+#Move up and then copy Softether libs to /usr/local
 cd ..
 mv vpnserver /usr/local
-
-# Set permissions
 cd /usr/local/vpnserver/
 chmod 600 *
 chmod 700 vpncmd
 chmod 700 vpnserver
 
-# Stop systemd-resolved service
-systemctl stop systemd-resolved
+#grab Softether vpn server.config template
+wget -O /usr/local/vpnserver/vpn_server.config https://raw.githubusercontent.com/LO0LEE/chuchu/main/vpn_server.config
 
-# Edit resolved.conf to disable DNSStubListener
-echo "DNSStubListener=no" >> /etc/systemd/resolved.conf
+#Create systemd init file for Softether VPN service
+wget -O /lib/systemd/system/vpnserver.service https://raw.githubusercontent.com/LO0LEE/chuchu/main/vpnserver.service
+#Grab DNSMasq conf
+wget -O /etc/dnsmasq.conf https://raw.githubusercontent.com/LO0LEE/chuchu/main/dnsmasq.conf
+wget -O /etc/logrotate.d/dnsmasq https://raw.githubusercontent.com/LO0LEE/chuchu/main/dnsmasq
 
-# Start systemd-resolved service
-systemctl start systemd-resolved
+shopt -s extglob; NET_INTERFACE=$(ip link | awk -F: '$0 !~ "lo|vir|wl|tap_soft|^[^0-9]"{print $2;getline}'); NET_INTERFACE="${NET_INTERFACE##*( )}"; sed -i s/ens3/"$NET_INTERFACE"/g /etc/dnsmasq.conf; shopt -u extglob;
 
-# Edit dnsmasq.conf for DHCP and DNS configuration
-echo -e "interface=tap_soft\ndhcp-range=tap_soft,192.168.7.50,192.168.7.60,12h\ndhcp-option=tap_soft,3,192.168.7.1\nserver=1.1.1.1" >> /etc/dnsmasq.conf
+#Grab ipv4 enabling and execute it
+wget -O /root/sysctl-forwarding.sh https://raw.githubusercontent.com/LO0LEE/chuchu/main/sysctl-forwarding.sh; chmod a+x /root/sysctl-forwarding.sh && bash /root/sysctl-forwarding.sh;
 
-# Edit vpnserver startup script
-cat <<EOF > /etc/init.d/vpnserver
-#!/bin/sh
-# BEGIN INIT INFO
-# Provides: vpnserver
-# Required-Start: \$remote_fs \$syslog
-# Required-Stop: \$remote_fs \$syslog
-# Default-Start: 2 3 4 5
-# Default-Stop: 0 1 6
-# Short-Description: Start daemon at boot time
-# Description: Enable Softether by daemon.
-# END INIT INFO
-DAEMON=/usr/local/vpnserver/vpnserver
-LOCK=/var/lock/subsys/vpnserver
-TAP_ADDR=192.168.7.1
+#Grab base Sofether Iptables rules
+wget -O /root/softether-iptables.sh https://raw.githubusercontent.com/LO0LEE/chuchu/main/softether-iptables.sh; chmod a+x /root/softether-iptables.sh;
 
-test -x \$DAEMON || exit 0
-case "\$1" in
-start)
-    \$DAEMON start
-    touch \$LOCK
-    sleep 1
-    /sbin/ifconfig tap_soft \$TAP_ADDR
-    ;;
-stop)
-    \$DAEMON stop
-    rm \$LOCK
-    ;;
-restart)
-    \$DAEMON stop
-    sleep 3
-    \$DAEMON start
-    sleep 1
-    /sbin/ifconfig tap_soft \$TAP_ADDR
-    ;;
-*)
-    echo "Usage: \$0 {start|stop|restart}"
-    exit 1
-    ;;
-esac
-exit 0
-EOF
+#Make ethers file for dnsmasq to do static assignments based on Mac Addresses
+touch /etc/ethers
 
-# Set permissions for vpnserver startup script
-chmod 755 /etc/init.d/vpnserver
+echo "Configuration files locations"
+echo "Dnsmasq /etc/dnsmasq.conf"
+echo "Iptables /root/softether-iptables.sh"
+echo "SoftEther vpn_server.config /usr/local/vpnserver/vpn_server.config"
+echo "Softether systemd service /lib/systemd/system/vpnserver.service"
 
-# Update startup script
-update-rc.d vpnserver defaults
+#To enable, start,and check status of the systemd dnsmasq dhcp service.
+systemctl enable vpnserver dnsmasq
+systemctl daemon-reload; systemctl stop dnsmasq.service; systemctl start dnsmasq.service; systemctl restart vpnserver;
+systemctl status vpnserver dnsmasq
 
-# Create ipv4 forwarding configuration file
-echo "net.ipv4.ip_forward = 1" > /etc/sysctl.d/ipv4_forwarding.conf
 
-# Apply ipv4 forwarding changes
-sysctl --system
+echo "To enable, start,and check status of the systemd Softether vpn service."
+echo "systemctl start vpnserver"
+echo "systemctl stop vpnserver"
+echo "systemctl restart vpnserver"
+echo "systemctl status vpnserver"
 
-# Add rule to firewall
-iptables -t nat -A POSTROUTING -s 192.168.7.0/24 -j SNAT --to-source [YOUR_VPS_IP_ADDRESS]
+echo "To enable, start,and check status of the systemd Dnsmasq DHCP service. This is autostarted by vpnserver service but if needed the below are the commands to manage it."
+echo "systemctl start dnsmasq"
+echo "systemctl stop dnsmasq"
+echo "systemctl restart dnsmasq"
+echo "systemctl status dnsmasq"
 
-# Install iptables-persistent
-apt-get install -y iptables-persistent
+echo "If configuration files for dnsmaq or the softether systemd script the below command will need to be done to reload and startup the services."
+echo "systemctl daemon-reload; systemctl stop dnsmasq.service; systemctl start dnsmasq.service; systemctl restart vpnserver;"
 
-# Restart services
-/etc/init.d/vpnserver restart
-/etc/init.d/dnsmasq restart
+echo "Default vpn user is 'test' with password 'softethervpn'"
+echo "Default Server administrator password is 'softethervpn'"
+echo "To manage the server via Windows Server GUI grab the Server Manager client from https://github.com/SoftEtherVPN/SoftEtherVPN_Stable/releases/download/v4.29-9680-rtm/softether-vpnserver_vpnbridge-v4.29-9680-rtm-2019.02.28-windows-x86_x64-intel.exe"
+VPNEXTERNALIP=$(hostname -I | cut -d ' ' -f 1)
+echo "Connect to $VPNEXTERNALIP:443"
+echo "To connect to the VPN grab and install the softether vpn client from: http://www.softether-download.com/en.aspx?product=softether"
+echo "Complete"
